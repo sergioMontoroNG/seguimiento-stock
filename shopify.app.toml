@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "b891965ac16ca33fa99be06beccd773e"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://seguimiento-stock.vercel.app"
 embedded = true
 name = "seguimiento stock"
 
@@ -34,7 +34,7 @@ name = "Description"
 type = "multi_line_text_field"
 
 [app_proxy]
-url = "https://example.com/proxy/delivery"
+url = "https://seguimiento-stock.vercel.app/proxy/delivery"
 subpath = "delivery"
 prefix = "apps"
 
@@ -50,8 +50,12 @@ api_version = "2027-01"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+redirect_urls = [
+  "https://seguimiento-stock.vercel.app/auth/callback",
+  "https://seguimiento-stock.vercel.app/auth/shopify/callback",
+  "https://seguimiento-stock.vercel.app/api/auth/callback"
+]
 
 [build]
 include_config_on_deploy = true
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
