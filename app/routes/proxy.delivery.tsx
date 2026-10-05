@@ -46,7 +46,7 @@ const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
   Response.json(body, { status, headers });
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.public.appProxy(request);
+  const { admin, session } = await authenticate.public.appProxy(request);
   if (!admin) return json({ error: "app not installed" }, 500);
 
   const url = new URL(request.url);
@@ -82,8 +82,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const result: Record<string, unknown> = source
       ? { origin: source.name, days: source.days, date: todayPlusDays(source.days) }
       : { origin: null, days: null, date: null };
-    // El proxy es público: las cantidades por ubicación solo se exponen si se activa expresamente
-    if (url.searchParams.has("debug") && process.env.DELIVERY_DEBUG === "1") {
+    // El proxy es público: las cantidades por ubicación solo se exponen en las tiendas listadas
+    // en DELIVERY_DEBUG_SHOPS (dominios myshopify separados por comas, p. ej. la de pruebas)
+    const debugShops = (process.env.DELIVERY_DEBUG_SHOPS || "")
+      .split(",")
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    if (
+      url.searchParams.has("debug") &&
+      session?.shop &&
+      debugShops.includes(session.shop.toLowerCase())
+    ) {
       result.locations = stock;
     }
     return json(result, 200, {
