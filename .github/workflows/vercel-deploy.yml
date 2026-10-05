@@ -1,0 +1,41 @@
+name: Vercel Deploy
+
+# Despliega en Vercel en cada push usando solo VERCEL_TOKEN.
+# Se elimina .git antes de desplegar para que el deployment no lleve
+# metadatos de autor/commit (deployment "anónimo").
+
+on:
+  push:
+
+concurrency:
+  group: vercel-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Strip git metadata
+        run: rm -rf .git
+
+      - name: Deploy (production on main, preview elsewhere)
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            vercel deploy --prod --yes --token "$VERCEL_TOKEN"
+          else
+            vercel deploy --yes --token "$VERCEL_TOKEN"
+          fi
