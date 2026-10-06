@@ -1,10 +1,11 @@
-// App Proxy: GET /apps/delivery?variant=<id numérico de variante>[&debug=1]
+// App Proxy: GET /apps/delivery?variant=<id numérico de variante>[&qty=<unidades>][&debug=1]
 // Consulta el inventario por ubicación y devuelve el origen del stock y la fecha estimada
 // de entrega (hoy + días según el origen, días naturales).
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 
-// Orden = prioridad. Se usa la primera ubicación de la lista con al menos 1 unidad disponible.
+// Orden = prioridad. Se usa la primera ubicación de la lista que cubra TODA la cantidad pedida (qty, por
+// defecto 1). Los pedidos no se dividen: si la ubicación corta no llega, toda la línea va a la siguiente.
 const SOURCES = [
   { name: "Newgarden GOLD 3PL Dallas", days: 4 },
   { name: "NEW GARDEN MEXICO (PIRINEOS)", days: 18 },
@@ -55,6 +56,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json({ error: "variant must be a numeric id" }, 400);
   }
 
+  const qtyParam = url.searchParams.get("qty") || "1";
+  if (!/^\d{1,6}$/.test(qtyParam) || Number(qtyParam) < 1) {
+    return json({ error: "qty must be a positive integer" }, 400);
+  }
+  const qty = Number(qtyParam);
+
   try {
     const response = await admin.graphql(QUERY, {
       variables: { id: `gid://shopify/ProductVariant/${variant}` },
@@ -77,7 +84,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const stockByNorm = new Map(
       Object.entries(stock).map(([k, v]) => [norm(k), v]),
     );
-    const source = SOURCES.find((s) => (stockByNorm.get(norm(s.name)) || 0) >= 1);
+    const source = SOURCES.find((s) => (stockByNorm.get(norm(s.name)) || 0) >= qty);
 
     const result: Record<string, unknown> = source
       ? { origin: source.name, days: source.days, date: todayPlusDays(source.days) }
