@@ -1,4 +1,6 @@
 // App Proxy: GET /apps/delivery?variant=<id numérico de variante>[&qty=<unidades>][&debug=1]
+// Por lotes: GET /apps/delivery?variants=<id,id,...>[&qty=<unidades>] (hasta 250) -> { results: { <id>: <resultado> } }
+// con el mismo resultado por variante que el modo individual (null si la variante no existe).
 // Consulta el inventario por ubicación y devuelve el origen del stock y la fecha estimada
 // de entrega (hoy + días según el origen, días naturales).
 import type { LoaderFunctionArgs } from "react-router";
@@ -67,6 +69,59 @@ function todayPlusDays(days: number) {
   return d.toISOString().slice(0, 10);
 }
 
+const BATCH_QUERY = `#graphql
+  query VariantsStock($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on ProductVariant {
+        id
+        inventoryItem {
+          inventoryLevels(first: 10) {
+            nodes {
+              location { name }
+              quantities(names: ["available"]) { name quantity }
+            }
+          }
+        }
+      }
+    }
+  }`;
+const BATCH_MAX = 250;
+const BATCH_CHUNK = 40;
+const BATCH_PARALLEL = 3;
+
+type Level = {
+  location: { name: string };
+  quantities: { name: string; quantity: number }[];
+};
+
+function stockOf(nodes: Level[]) {
+  const stock: Record<string, number> = {};
+  for (const node of nodes) {
+    stock[node.location.name] =
+      node.quantities.find((q) => q.name === "available")?.quantity ?? 0;
+  }
+  return stock;
+}
+
+function resultFor(stock: Record<string, number>, qty: number) {
+  const stockByNorm = new Map(Object.entries(stock).map(([k, v]) => [norm(k), v]));
+  const source =
+    SOURCES.find((s) => !s.fallback && (stockByNorm.get(norm(s.name)) || 0) >= qty) ||
+    SOURCES.find((s) => s.fallback && (stockByNorm.get(norm(s.name)) || 0) > 0);
+  const result: Record<string, unknown> = source
+    ? {
+        origin: source.name,
+        days: source.days,
+        date: todayPlusDays(source.days),
+        ...(source.minDays !== undefined && {
+          minDays: source.minDays,
+          minDate: todayPlusDays(source.minDays),
+        }),
+      }
+    : { origin: null, days: null, date: null };
+  return result;
+}
+
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
   Response.json(body, { status, headers });
 
@@ -86,6 +141,42 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
   const qty = Number(qtyParam);
 
+  const variantsParam = url.searchParams.get("variants");
+  if (variantsParam !== null) {
+    const ids = [...new Set(variantsParam.split(",").map((v) => v.trim()).filter(Boolean))];
+    if (!ids.length || ids.length > BATCH_MAX || !ids.every((v) => /^\d{1,20}$/.test(v))) {
+      return json({ error: `variants must be 1-${BATCH_MAX} numeric ids` }, 400);
+    }
+    try {
+      const chunks: string[][] = [];
+      for (let i = 0; i < ids.length; i += BATCH_CHUNK) chunks.push(ids.slice(i, i + BATCH_CHUNK));
+      const results: Record<string, unknown> = Object.fromEntries(ids.map((id) => [id, null]));
+      let next = 0;
+      const worker = async () => {
+        while (next < chunks.length) {
+          const chunk = chunks[next++];
+          const response = await admin.graphql(BATCH_QUERY, {
+            variables: { ids: chunk.map((id) => `gid://shopify/ProductVariant/${id}`) },
+          });
+          const body = await response.json();
+          if (body.errors) throw new Error(JSON.stringify(body.errors));
+          for (const node of body.data?.nodes || []) {
+            if (!node?.id) continue;
+            const id = String(node.id).split("/").pop()!;
+            results[id] = resultFor(stockOf(node.inventoryItem?.inventoryLevels?.nodes || []), qty);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(BATCH_PARALLEL, chunks.length) }, worker));
+      return json({ results }, 200, {
+        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+      });
+    } catch (err) {
+      console.error(err);
+      return json({ error: "unexpected error" }, 502);
+    }
+  }
+
   try {
     const response = await admin.graphql(QUERY, {
       variables: { id: `gid://shopify/ProductVariant/${variant}` },
@@ -95,34 +186,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       console.warn(`Variant ${variant} not found`);
       return json({ error: "variant not found" }, 404);
     }
-    const nodes: {
-      location: { name: string };
-      quantities: { name: string; quantity: number }[];
-    }[] = body.data?.productVariant?.inventoryItem?.inventoryLevels?.nodes || [];
-    const stock: Record<string, number> = {};
-    for (const node of nodes) {
-      stock[node.location.name] =
-        node.quantities.find((q) => q.name === "available")?.quantity ?? 0;
-    }
-
-    const stockByNorm = new Map(
-      Object.entries(stock).map(([k, v]) => [norm(k), v]),
-    );
-    const source =
-      SOURCES.find((s) => !s.fallback && (stockByNorm.get(norm(s.name)) || 0) >= qty) ||
-      SOURCES.find((s) => s.fallback && (stockByNorm.get(norm(s.name)) || 0) > 0);
-
-    const result: Record<string, unknown> = source
-      ? {
-          origin: source.name,
-          days: source.days,
-          date: todayPlusDays(source.days),
-          ...(source.minDays !== undefined && {
-            minDays: source.minDays,
-            minDate: todayPlusDays(source.minDays),
-          }),
-        }
-      : { origin: null, days: null, date: null };
+    const nodes: Level[] = body.data?.productVariant?.inventoryItem?.inventoryLevels?.nodes || [];
+    const stock = stockOf(nodes);
+    const result = resultFor(stock, qty);
     // El proxy es público: las cantidades por ubicación solo se exponen en las tiendas listadas
     // en DELIVERY_DEBUG_SHOPS (dominios myshopify separados por comas, p. ej. la de pruebas)
     const debugShops = (process.env.DELIVERY_DEBUG_SHOPS || "")
