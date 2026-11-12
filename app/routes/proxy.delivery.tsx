@@ -6,13 +6,37 @@ import { authenticate } from "../shopify.server";
 
 // Orden = prioridad. Se usa la primera ubicación de la lista que cubra TODA la cantidad pedida (qty, por
 // defecto 1). Los pedidos no se dividen: si la ubicación corta no llega, toda la línea va a la siguiente.
-const SOURCES = [
+// Una fuente con `fallback: true` se usa cuando ninguna anterior cubre la cantidad, siempre que tenga
+// algún stock (no hace falta que cubra qty).
+// `days` es el plazo máximo (con el que se calcula `date`); `minDays` el mínimo, opcional.
+// Se configura con DELIVERY_SOURCES (JSON) y DELIVERY_TIME_ZONE; por defecto, la configuración de USA.
+type Source = { name: string; days: number; minDays?: number; fallback?: boolean };
+
+const DEFAULT_SOURCES: Source[] = [
   { name: "Newgarden GOLD 3PL Dallas", days: 4 },
   { name: "NEW GARDEN MEXICO (PIRINEOS)", days: 18 },
 ];
 
-// "Hoy" se calcula en la zona horaria de Dallas, no en la del servidor.
-const TIME_ZONE = "America/Chicago";
+function loadSources(): Source[] {
+  const raw = process.env.DELIVERY_SOURCES;
+  if (!raw) return DEFAULT_SOURCES;
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((s) => typeof s?.name === "string" && Number.isFinite(s?.days))
+    ) {
+      return parsed;
+    }
+  } catch {}
+  console.error("DELIVERY_SOURCES no es válido; se usan las fuentes por defecto");
+  return DEFAULT_SOURCES;
+}
+const SOURCES = loadSources();
+
+// "Hoy" se calcula en la zona horaria de la tienda, no en la del servidor.
+const TIME_ZONE = process.env.DELIVERY_TIME_ZONE || "America/Chicago";
 
 const QUERY = `#graphql
   query VariantStock($id: ID!) {
@@ -84,10 +108,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const stockByNorm = new Map(
       Object.entries(stock).map(([k, v]) => [norm(k), v]),
     );
-    const source = SOURCES.find((s) => (stockByNorm.get(norm(s.name)) || 0) >= qty);
+    const source =
+      SOURCES.find((s) => !s.fallback && (stockByNorm.get(norm(s.name)) || 0) >= qty) ||
+      SOURCES.find((s) => s.fallback && (stockByNorm.get(norm(s.name)) || 0) > 0);
 
     const result: Record<string, unknown> = source
-      ? { origin: source.name, days: source.days, date: todayPlusDays(source.days) }
+      ? {
+          origin: source.name,
+          days: source.days,
+          date: todayPlusDays(source.days),
+          ...(source.minDays !== undefined && {
+            minDays: source.minDays,
+            minDate: todayPlusDays(source.minDays),
+          }),
+        }
       : { origin: null, days: null, date: null };
     // El proxy es público: las cantidades por ubicación solo se exponen en las tiendas listadas
     // en DELIVERY_DEBUG_SHOPS (dominios myshopify separados por comas, p. ej. la de pruebas)
