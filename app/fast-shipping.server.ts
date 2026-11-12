@@ -1,6 +1,6 @@
 // Metacampo de variante custom.envio_rapido_uk (booleano): true si el almacén local (FAST_SHIPPING_LOCATION) tiene
 // al menos 1 unidad disponible. Lo lee el tema en Liquid (filtro «Solo envío rápido» de colecciones) sin llamar a la app.
-// Lo mantienen: el webhook inventory_levels/update (webhooks.inventory.tsx) y la sincronización completa (api.sync-fast-shipping.tsx).
+// Lo mantiene el webhook inventory_levels/update (webhooks.inventory.tsx); la carga inicial se hace con un script contra la Admin API.
 export const FAST_NAMESPACE = "custom";
 export const FAST_KEY = "envio_rapido_uk";
 
