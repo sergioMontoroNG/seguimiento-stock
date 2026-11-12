@@ -1,0 +1,60 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "c6892172f8e9f3dc19670e5186aee52d"
+application_url = "https://seguimiento-stock-uk.vercel.app"
+embedded = true
+name = "seguimiento stock"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_inventory,read_locations,write_app_proxy,write_metaobject_definitions,write_metaobjects,write_products"
+
+[product.metafields.app.demo_info]
+type = "single_line_text_field"
+name = "Demo Source Info"
+description = "Tracks products created by the Shopify app template for development"
+
+  [product.metafields.app.demo_info.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example]
+name = "Example"
+description = "An example metaobject definition created by this template"
+
+  [metaobjects.app.example.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example.fields.title]
+name = "Title"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.example.fields.description]
+name = "Description"
+type = "multi_line_text_field"
+
+[app_proxy]
+url = "https://seguimiento-stock-uk.vercel.app/proxy/delivery"
+subpath = "delivery"
+prefix = "apps"
+
+[webhooks]
+api_version = "2027-01"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [
+  "https://seguimiento-stock-uk.vercel.app/auth/callback",
+  "https://seguimiento-stock-uk.vercel.app/auth/shopify/callback",
+  "https://seguimiento-stock-uk.vercel.app/api/auth/callback"
+]
+
+[build]
+automatically_update_urls_on_dev = false
